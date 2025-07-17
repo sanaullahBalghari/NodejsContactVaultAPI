@@ -1,24 +1,58 @@
 import asyncHandler from "../utils/asyncHandler.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { ApiError } from "../utils/ApiError.js";
+import { Contact } from "../models/contact.model.js";
 
-// Temporary in-memory contacts
-let contacts = [
-  { id: 1, name: "Ali", phone: "123456" },
-  { id: 2, name: "Sara", phone: "987654" }
-];
-
-// 👉 GET all contacts 
+//  GET all contacts
 export const getAllContacts = asyncHandler(async (req, res) => {
-  return res
-    .status(200)
-    .json(new ApiResponse(200, contacts, "Contacts fetched successfully"));
+  // 📌 Query params
+  const { search, page = 1, limit = 10 } = req.query;
+  let filter = {};
+
+  // 📌 Search filter
+  if (search) {
+    const regex = new RegExp(search, "i"); // i = case-insensitive
+    filter = {
+      $or: [
+        { name: regex },
+        { email: regex },
+        { phone: regex },
+        { occupation: regex }
+      ]
+    };
+  }
+
+  // 📌 Pagination calculation
+  const skip = (page - 1) * limit;
+
+  // 📌 Fetch contacts with filter + pagination
+  const contacts = await Contact.find(filter)
+    .skip(Number(skip))
+    .limit(Number(limit));
+
+  // 📌 Total count for matched documents
+  const total = await Contact.countDocuments(filter);
+
+  // 📌 Send response
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        contacts,
+        total,
+        page: Number(page),
+        pages: Math.ceil(total / limit)
+      },
+      "Contacts fetched successfully"
+    )
+  );
 });
 
-// 👉 GET single contact by ID
+
+//  GET single contact by ID
 export const getContactById = asyncHandler(async (req, res) => {
-  const { id }= req.params
-  const contact = contacts.find(c => c.id === Number(id));
+  const id = req.params.id;
+  const contact = await Contact.findById(id);
 
   if (!contact) {
     throw new ApiError(404, "Contact not found");
@@ -29,59 +63,60 @@ export const getContactById = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, contact, "Contact fetched successfully"));
 });
 
-export const createContact=asyncHandler(async(req, res)=>{
+//create a contact
+export const createContact = asyncHandler(async (req, res) => {
+  const {name, phone, email, address, occupation} = req.body;
 
-  const {name, phone}=res.body 
-
-  if(!name || ! phone){
-    throw new ApiError(400,"Name and phone are requried")
+  if (!name || !phone) {
+    throw new ApiError(400, "Name and phone are requried");
   }
 
-  const newContact={
-    id:contacts.length + 1,
-    name,
-    phone
+  const existing = await Contact.findOne({ name: name, phone: phone, user: req.user._id });
 
+  if (existing) {
+    return res.status(409).json({
+      success: false,
+      message: "Contact with this name and phone already exists",
+    });
   }
+  
 
-  contacts.push(newContact);
-   return res
+  const newContact = await Contact.create({ name, phone });
+  return res
     .status(201)
     .json(new ApiResponse(201, newContact, "Contact created successfully"));
+});
 
-})
+// update contact
 
-export const updateContact=asyncHandler(async(req, res)=>{
+export const updateContact = asyncHandler(async (req, res) => {
+  const id = req.params.id;
 
-  const{id}=req.params
+  const { name, phone, email, address, occupation } = req.body;
 
-  const {name, phone}=res.body
+  let updatedContact = await Contact.findByIdAndUpdate(
+    id,
+    { name, phone, email, address, occupation},
+    { new: true, runValidators: true }
+  );
 
-  let contact=contacts.find(c=> c.id== Number(id))
-
-   if (!contact) {
+  if (!updatedContact) {
     throw new ApiError(404, "Contact not found");
   }
 
-  if(name) contacts.name=name
-  if(phone)contacts.phone=phone
-
-    return res
+  return res
     .status(200)
-    .json(new ApiResponse(200, contact, "Contact updated successfully"));
-})
+    .json(new ApiResponse(200, updatedContact, "Contact updated successfully"));
+});
 
-// 👉 DELETE contact
+//  DELETE contact
 export const deleteContact = asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  const contactIndex = contacts.findIndex(c => c.id === id);
+  const id = req.params.id;
+  const deletedContact = await Contact.findByIdAndDelete(id);
 
-  if (contactIndex === -1) {
+  if (deletedContact === -1) {
     throw new ApiError(404, "Contact not found");
   }
-
-  const deletedContact = contacts[contactIndex];
-  contacts.splice(contactIndex, 1);
 
   return res
     .status(200)
